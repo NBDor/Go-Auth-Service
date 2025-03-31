@@ -1,23 +1,32 @@
-# Use the official Go image as a parent image
-FROM golang:1.22-alpine
+FROM golang:1.22-alpine AS builder
 
-# Set the working directory inside the container
 WORKDIR /app
 
-# Copy go.mod and go.sum files first (if they exist)
-COPY go.mod go.sum* ./
+# Copy go mod and sum files
+COPY go.mod go.sum ./
 
-# Download dependencies (if any)
+# Download all dependencies
 RUN go mod download
 
-# Copy the rest of the source code
+# Copy the source code
 COPY . .
 
 # Build the application
-RUN go build -o main ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main ./cmd/server
 
-# Expose the port the app runs on
+# Use a smaller image for the final container
+FROM alpine:latest  
+
+WORKDIR /root/
+
+# Install necessary packages
+RUN apk --no-cache add ca-certificates
+
+# Copy the binary from builder
+COPY --from=builder /app/main .
+
+# Expose port
 EXPOSE 8080
 
-# Command to run the executable
+# Command to run
 CMD ["./main"]
