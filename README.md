@@ -16,6 +16,10 @@ Go-Auth-Service/
 │       └── main.go        # Main server code
 ├── internal/
 │   ├── auth/              # Authentication logic
+│   │   ├── provider.go    # Authentication provider interface
+│   │   └── providers/     # Individual auth provider implementations
+│   │       ├── local/     # Username/password authentication
+│   │       └── oauth2/    # OAuth2 authentication
 │   └── middleware/        # HTTP middleware components
 ├── pkg/
 │   └── jwt/               # JWT utilities
@@ -30,7 +34,9 @@ Go-Auth-Service/
 
 - JWT-based authentication
 - Role-based access control (RBAC)
-- Multiple identity provider integration
+- Multiple authentication providers:
+  - Local username/password
+  - OAuth2 (Google, GitHub, etc.)
 - API rate limiting
 - Secure password hashing
 
@@ -84,11 +90,3 @@ This project uses GitHub Actions for continuous integration. The workflow:
 2. Runs tests
 3. Builds a Docker image
 4. Verifies the Docker container works correctly
-
-## License
-
-[Add your license here]
-
-## Contributing
-
-[Add contribution guidelines here]
