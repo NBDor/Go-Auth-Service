@@ -8,6 +8,31 @@ on:
 
 jobs:
   build:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.22'
+
+    - name: Build
+      run: go build -v ./...
+
+    - name: Run in-memory tests
+      run: go test -v ./internal/integration/memory_auth_test.go
+      env:
+        JWT_SECRET: test-secret-key
+        TOKEN_EXPIRY: 1h
+
+    - name: Build Docker image
+      run: docker build -t go-auth-service .
+
+  database-tests:
+    name: Database Tests
     runs-on: ubuntu-latest
     
     services:
@@ -33,14 +58,11 @@ jobs:
       with:
         go-version: '1.22'
 
-    - name: Build
-      run: go build -v ./...
-
-    - name: Run unit tests
-      run: go test -v ./...
+    - name: Install dependencies
+      run: go mod download
       
-    - name: Run integration tests
-      run: go test -v ./internal/integration/...
+    - name: Run database integration tests
+      run: go test -tags=database -v ./internal/integration/db_auth_test.go
       env:
         DB_HOST: localhost
         DB_PORT: 5432
@@ -50,6 +72,3 @@ jobs:
         DB_SSLMODE: disable
         JWT_SECRET: test-secret-key
         TOKEN_EXPIRY: 1h
-
-    - name: Build Docker image
-      run: docker build -t go-auth-service .

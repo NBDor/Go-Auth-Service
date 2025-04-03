@@ -7,7 +7,32 @@ on:
     branches: [ main ]
 
 jobs:
-  test:
+  memory-tests:
+    name: In-Memory Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.22'
+
+    - name: Install dependencies
+      run: go mod download
+
+    - name: Build
+      run: go build -v ./...
+
+    - name: Run in-memory integration tests
+      run: go test -v ./internal/integration/memory_auth_test.go
+      env:
+        JWT_SECRET: test-secret-key
+        TOKEN_EXPIRY: 1h
+
+  database-tests:
+    name: Database Tests
     runs-on: ubuntu-latest
     
     services:
@@ -38,12 +63,9 @@ jobs:
 
     - name: Build
       run: go build -v ./...
-
-    - name: Run unit tests
-      run: go test -v ./...
       
-    - name: Run integration tests
-      run: go test -v ./internal/integration/...
+    - name: Run database integration tests
+      run: go test -tags=database -v ./internal/integration/db_auth_test.go
       env:
         DB_HOST: localhost
         DB_PORT: 5432

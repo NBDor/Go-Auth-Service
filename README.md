@@ -99,20 +99,20 @@ The default admin credentials are:
 
 #### Running Tests Locally
 
-Run the integration tests locally:
+The project has separate test suites for in-memory and database-backed scenarios:
 
 ```bash
 # Install dependencies
 go mod tidy
 
-# Run all tests
-go test ./...
+# Run in-memory tests only (default)
+go test -v ./internal/integration/memory_auth_test.go
 
-# Run only integration tests
-go test -v ./internal/integration
+# Run database tests only (requires PostgreSQL)
+go test -tags=database -v ./internal/integration/db_auth_test.go
 ```
 
-These tests will check both the health endpoint and the authentication flow.
+These tests verify the health endpoint and authentication flows in both storage modes.
 
 ### Common Development Commands
 
