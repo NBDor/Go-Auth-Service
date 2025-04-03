@@ -66,3 +66,11 @@ func (r *ProviderRegistry) Get(name string) (Provider, bool) {
 func (r *ProviderRegistry) GetAll() map[string]Provider {
 	return r.providers
 }
+
+func (r *ProviderRegistry) ListProviders() []Provider {
+	providers := make([]Provider, 0, len(r.providers))
+	for _, provider := range r.providers {
+		providers = append(providers, provider)
+	}
+	return providers
+}

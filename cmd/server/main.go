@@ -7,11 +7,15 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/NBDor/Go-Auth-Service/internal/auth"
 	"github.com/NBDor/Go-Auth-Service/internal/auth/providers/local"
+	"github.com/NBDor/Go-Auth-Service/internal/auth/providers/local/postgres"
+	"github.com/NBDor/Go-Auth-Service/internal/database"
+	"github.com/jmoiron/sqlx"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -19,23 +23,28 @@ func main() {
 	// Create a registry for authentication providers
 	providerRegistry := auth.NewProviderRegistry()
 
-	// Set up a local authentication provider with in-memory storage
-	userStore := local.NewMemoryUserStore()
-	localProviderConfig := local.DefaultConfig()
-	localProvider := local.NewProvider(localProviderConfig, userStore)
-	providerRegistry.Register(localProvider)
-
-	// Add a sample user for testing
-	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
-	sampleUser := &local.StoredUser{
-		Username:     "testuser",
-		Email:        "test@example.com",
-		PasswordHash: string(hashedPassword),
-		Roles:        []string{"user"},
-		Metadata:     map[string]interface{}{"created_by": "system"},
+	// Initialize database connection
+	log.Println("Initializing database connection...")
+	dbConfig := database.NewConfigFromEnv()
+	db, err := database.Connect(dbConfig)
+	if err != nil {
+		log.Printf("Failed to connect to database: %v", err)
+		log.Println("Falling back to in-memory storage")
+		useInMemoryStorage(providerRegistry)
+	} else {
+		log.Println("Successfully connected to database")
+		// Initialize database schema
+		if err := database.Initialize(db); err != nil {
+			log.Printf("Failed to initialize database schema: %v", err)
+			log.Println("Falling back to in-memory storage")
+			useInMemoryStorage(providerRegistry)
+		} else {
+			// Set up PostgreSQL user store
+			usePostgresStorage(providerRegistry, db)
+		}
 	}
+
 	ctx := context.Background()
-	_ = userStore.Create(ctx, sampleUser)
 
 	// Set up HTTP server
 	mux := http.NewServeMux()
@@ -44,7 +53,15 @@ func main() {
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, `{"status":"ok","providers":["%s"]}`, localProvider.Name())
+		
+		// Get the list of registered providers
+		providers := providerRegistry.ListProviders()
+		providerNames := make([]string, len(providers))
+		for i, p := range providers {
+			providerNames[i] = p.Name()
+		}
+		
+		fmt.Fprintf(w, `{"status":"ok","providers":["%s"]}`, strings.Join(providerNames, `","`))
 	})
 
 	// Add a basic authentication endpoint
@@ -74,8 +91,10 @@ func main() {
 		}
 
 		// Generate a JWT token
-		token, err := localProvider.RefreshToken(r.Context(), "")
+		ctx := context.WithValue(r.Context(), "user", user)
+		token, err := provider.RefreshToken(ctx, "")
 		if err != nil {
+			log.Printf("Token generation error: %v", err)
 			http.Error(w, "Error generating token", http.StatusInternalServerError)
 			return
 		}
@@ -115,4 +134,77 @@ func main() {
 	}
 
 	log.Println("Server exited properly")
+}
+
+// Get the JWT configuration from environment variables
+func getJWTConfig() local.Config {
+	config := local.DefaultConfig()
+	
+	// Get JWT secret from env
+	if secret := os.Getenv("JWT_SECRET"); secret != "" {
+		config.JWTSecret = secret
+	}
+	
+	// Get token expiry from env
+	if expiryStr := os.Getenv("TOKEN_EXPIRY"); expiryStr != "" {
+		if expiry, err := time.ParseDuration(expiryStr); err == nil {
+			config.TokenExpiration = expiry
+		}
+	}
+	
+	return config
+}
+
+// useInMemoryStorage sets up the in-memory user store for authentication
+func useInMemoryStorage(registry *auth.ProviderRegistry) {
+	userStore := local.NewMemoryUserStore()
+	localProviderConfig := getJWTConfig()
+	localProvider := local.NewProvider(localProviderConfig, userStore)
+	registry.Register(localProvider)
+
+	// Add a sample user for testing
+	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("password123"), bcrypt.DefaultCost)
+	sampleUser := &local.StoredUser{
+		Username:     "testuser",
+		Email:        "test@example.com",
+		PasswordHash: string(hashedPassword),
+		Roles:        []string{"user"},
+		Metadata:     map[string]interface{}{"created_by": "system"},
+	}
+	ctx := context.Background()
+	_ = userStore.Create(ctx, sampleUser)
+	
+	log.Println("Initialized in-memory user store with test user: testuser")
+}
+
+// usePostgresStorage sets up the PostgreSQL user store for authentication
+func usePostgresStorage(registry *auth.ProviderRegistry, db *sqlx.DB) {
+	userStore := postgres.NewSQLUserStore(db)
+	localProviderConfig := getJWTConfig()
+	log.Printf("Using JWT config: secret=%s, expiry=%s", 
+		localProviderConfig.JWTSecret[:3]+"...", localProviderConfig.TokenExpiration)
+	
+	localProvider := local.NewProvider(localProviderConfig, userStore)
+	registry.Register(localProvider)
+
+	// Check if we need to create an admin user
+	ctx := context.Background()
+	_, err := userStore.GetByUsername(ctx, "admin")
+	if err != nil && err.Error() == auth.ErrUserNotFound.Error() {
+		// Create default admin user
+		hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
+		adminUser := &local.StoredUser{
+			Username:     "admin",
+			Email:        "admin@example.com",
+			PasswordHash: string(hashedPassword),
+			Roles:        []string{"admin", "user"},
+			Metadata:     map[string]interface{}{"created_by": "system"},
+		}
+		err = userStore.Create(ctx, adminUser)
+		if err != nil {
+			log.Printf("Failed to create admin user: %v", err)
+		} else {
+			log.Println("Created default admin user: admin")
+		}
+	}
 }

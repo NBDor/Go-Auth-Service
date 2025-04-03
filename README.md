@@ -19,7 +19,9 @@ Go-Auth-Service/
 │   │   ├── provider.go    # Authentication provider interface
 │   │   └── providers/     # Individual auth provider implementations
 │   │       ├── local/     # Username/password authentication
-│   │       └── oauth2/    # OAuth2 authentication
+│   │       │   └── postgres/  # PostgreSQL storage implementation
+│   │       └── oauth2/    # OAuth2 authentication (planned)
+│   ├── database/          # Database connectivity and migrations
 │   └── middleware/        # HTTP middleware components
 ├── pkg/
 │   └── jwt/               # JWT utilities
@@ -32,13 +34,22 @@ Go-Auth-Service/
 
 ## Features
 
-- JWT-based authentication
+### Implemented
+- Authentication provider interface (extensible design)
+- Local username/password authentication
+- JWT token generation and validation
+- In-memory user store for development/testing
+- PostgreSQL database integration for persistent storage
+- Docker containerization
+- CI/CD pipeline with GitHub Actions
+
+### Planned
+- OAuth2 authentication providers
 - Role-based access control (RBAC)
-- Multiple authentication providers:
-  - Local username/password
-  - OAuth2 (Google, GitHub, etc.)
-- API rate limiting
-- Secure password hashing
+- API endpoints for user management
+- Token blacklisting and refresh
+- Rate limiting and security features
+- Observability (logging, metrics)
 
 ## Development Setup
 
@@ -65,6 +76,20 @@ This project uses Docker for development to avoid requiring local Go installatio
 
 3. The service will be available at http://localhost:8080
 
+### Using the API
+
+#### Authentication
+To authenticate and get a JWT token:
+
+```bash
+curl -X POST http://localhost:8080/auth/login \
+  -d "username=admin&password=admin123"
+```
+
+The default admin credentials are:
+- Username: `admin`
+- Password: `admin123`
+
 ### Common Development Commands
 
 Building the service:
@@ -82,6 +107,17 @@ Adding dependencies:
 docker run --rm -v $(pwd):/app -w /app golang:1.22 go get github.com/some/dependency
 ```
 
+## Database Configuration
+
+The service uses PostgreSQL for persistent storage with automatic fallback to in-memory storage if the database is unavailable. Database configuration can be customized through environment variables:
+
+- `DB_HOST`: Database hostname (default: localhost)
+- `DB_PORT`: Database port (default: 5432)
+- `DB_USER`: Database username (default: postgres)
+- `DB_PASSWORD`: Database password (default: postgres)
+- `DB_NAME`: Database name (default: auth_service)
+- `DB_SSLMODE`: SSL mode (default: disable)
+
 ## CI/CD Pipeline
 
 This project uses GitHub Actions for continuous integration. The workflow:
@@ -90,3 +126,16 @@ This project uses GitHub Actions for continuous integration. The workflow:
 2. Runs tests
 3. Builds a Docker image
 4. Verifies the Docker container works correctly
+
+## Next Steps
+
+1. Complete OAuth2 provider implementation
+2. Add API endpoints for user management
+3. Implement RBAC middleware
+4. Add security features (rate limiting, token blacklisting)
+5. Improve token management
+6. Add observability (logging, metrics)
+7. Create API documentation
+8. Enhance testing and CI/CD
+9. Add multi-tenancy support
+

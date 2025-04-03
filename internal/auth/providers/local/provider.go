@@ -106,6 +106,33 @@ func (p *Provider) ValidateToken(ctx context.Context, token string) (*auth.User,
 }
 
 func (p *Provider) RefreshToken(ctx context.Context, token string) (string, error) {
+	// If token is empty, generate a new token for the user in the context
+	if token == "" {
+		ctxUser, ok := ctx.Value("user").(*auth.User)
+		if !ok {
+			// We need to create a new token with minimal claims
+			// In production, you'd want to ensure all tokens have proper user info
+			claims := map[string]interface{}{
+				"sub":     "system",
+				"roles":   []string{"user"},
+				"provider": "local",
+			}
+			
+			return p.jwtUtil.GenerateToken(claims)
+		}
+		
+		// Use the authenticated user's information for the claims
+		claims := map[string]interface{}{
+			"sub":     ctxUser.ID,
+			"roles":   ctxUser.Roles,
+			"email":   ctxUser.Email,
+			"name":    ctxUser.Username,
+			"provider": "local",
+		}
+		
+		return p.jwtUtil.GenerateToken(claims)
+	}
+	
 	user, err := p.ValidateToken(ctx, token)
 	if err != nil {
 		return "", err
