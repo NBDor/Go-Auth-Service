@@ -8,7 +8,8 @@ A lightweight, secure authentication and authorization service built with Go. Th
 Go-Auth-Service/
 ├── .github/
 │   └── workflows/
-│       └── go.yml         # GitHub Actions CI workflow
+│       ├── go.yml         # GitHub Actions CI workflow
+│       └── test.yml       # Integration tests workflow
 ├── api/
 │   └── v1/                # API endpoints version 1
 ├── cmd/
@@ -22,7 +23,9 @@ Go-Auth-Service/
 │   │       │   └── postgres/  # PostgreSQL storage implementation
 │   │       └── oauth2/    # OAuth2 authentication (planned)
 │   ├── database/          # Database connectivity and migrations
-│   └── middleware/        # HTTP middleware components
+│   ├── integration/       # Integration tests
+│   ├── middleware/        # HTTP middleware components
+│   └── server/            # HTTP server and router logic
 ├── pkg/
 │   └── jwt/               # JWT utilities
 ├── .gitignore             # Git ignore file
@@ -40,6 +43,7 @@ Go-Auth-Service/
 - JWT token generation and validation
 - In-memory user store for development/testing
 - PostgreSQL database integration for persistent storage
+- Automated integration tests
 - Docker containerization
 - CI/CD pipeline with GitHub Actions
 
@@ -60,6 +64,7 @@ This project uses Docker for development to avoid requiring local Go installatio
 - Git
 - Docker
 - Docker Compose
+- Go 1.22+ (optional, for local development)
 
 ### Getting Started
 
@@ -90,6 +95,25 @@ The default admin credentials are:
 - Username: `admin`
 - Password: `admin123`
 
+### Testing
+
+#### Running Tests Locally
+
+Run the integration tests locally:
+
+```bash
+# Install dependencies
+go mod tidy
+
+# Run all tests
+go test ./...
+
+# Run only integration tests
+go test -v ./internal/integration
+```
+
+These tests will check both the health endpoint and the authentication flow.
+
 ### Common Development Commands
 
 Building the service:
@@ -97,17 +121,15 @@ Building the service:
 docker run --rm -v $(pwd):/app -w /app golang:1.22 go build -o main ./cmd/server
 ```
 
-Running tests:
-```bash
-docker run --rm -v $(pwd):/app -w /app golang:1.22 go test ./...
-```
-
 Adding dependencies:
 ```bash
-docker run --rm -v $(pwd):/app -w /app golang:1.22 go get github.com/some/dependency
+go get github.com/some/dependency
+go mod tidy
 ```
 
-## Database Configuration
+## Configuration
+
+### Database Configuration
 
 The service uses PostgreSQL for persistent storage with automatic fallback to in-memory storage if the database is unavailable. Database configuration can be customized through environment variables:
 
@@ -118,14 +140,26 @@ The service uses PostgreSQL for persistent storage with automatic fallback to in
 - `DB_NAME`: Database name (default: auth_service)
 - `DB_SSLMODE`: SSL mode (default: disable)
 
+### JWT Configuration
+
+JWT settings can be customized through environment variables:
+
+- `JWT_SECRET`: Secret key for signing JWTs (default: change-me-in-production)
+- `TOKEN_EXPIRY`: Token expiration time (default: 24h)
+
 ## CI/CD Pipeline
 
-This project uses GitHub Actions for continuous integration. The workflow:
+This project uses GitHub Actions for continuous integration. The workflows:
 
+### Build Workflow
 1. Builds the Go application
-2. Runs tests
-3. Builds a Docker image
-4. Verifies the Docker container works correctly
+2. Builds a Docker image
+3. Verifies the Docker container works correctly
+
+### Test Workflow
+1. Sets up a PostgreSQL service container
+2. Runs all unit tests
+3. Runs integration tests with database connectivity
 
 ## Next Steps
 
@@ -136,6 +170,4 @@ This project uses GitHub Actions for continuous integration. The workflow:
 5. Improve token management
 6. Add observability (logging, metrics)
 7. Create API documentation
-8. Enhance testing and CI/CD
-9. Add multi-tenancy support
-
+8. Add multi-tenancy support

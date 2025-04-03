@@ -1,4 +1,4 @@
-name: Go
+name: Tests
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
     
     services:
@@ -33,6 +33,9 @@ jobs:
       with:
         go-version: '1.22'
 
+    - name: Install dependencies
+      run: go mod download
+
     - name: Build
       run: go build -v ./...
 
@@ -50,6 +53,3 @@ jobs:
         DB_SSLMODE: disable
         JWT_SECRET: test-secret-key
         TOKEN_EXPIRY: 1h
-
-    - name: Build Docker image
-      run: docker build -t go-auth-service .
