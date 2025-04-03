@@ -43,7 +43,9 @@ Go-Auth-Service/
 - JWT token generation and validation
 - In-memory user store for development/testing
 - PostgreSQL database integration for persistent storage
-- Automated integration tests
+- Automated integration tests for both in-memory and database modes
+- Graceful fallback to in-memory storage if database is unavailable
+- Modular architecture with clean separation of concerns
 - Docker containerization
 - CI/CD pipeline with GitHub Actions
 
@@ -97,27 +99,37 @@ The default admin credentials are:
 
 ### Testing
 
-#### Running Tests Locally
+#### Testing Architecture
 
-The project has separate test suites for in-memory and database-backed scenarios:
+The project uses a dual testing approach:
+- **In-memory tests**: Fast tests that run without external dependencies
+- **Database tests**: Full integration tests that verify database functionality
+
+The tests are separated using Go build tags, allowing them to run independently.
+
+#### Running Tests Locally
 
 ```bash
 # Install dependencies
 go mod tidy
 
-# Run in-memory tests only (default)
+# Run in-memory tests (default, no database needed)
 go test -v ./internal/integration/memory_auth_test.go
 
-# Run database tests only (requires PostgreSQL)
+# Run database tests (requires PostgreSQL)
 go test -tags=database -v ./internal/integration/db_auth_test.go
 ```
 
-These tests verify the health endpoint and authentication flows in both storage modes.
+These tests verify both the health endpoint and authentication flows in their respective storage modes.
 
 ### Common Development Commands
 
 Building the service:
 ```bash
+# Local build
+go build -o main ./cmd/server
+
+# Docker build
 docker run --rm -v $(pwd):/app -w /app golang:1.22 go build -o main ./cmd/server
 ```
 
@@ -149,17 +161,31 @@ JWT settings can be customized through environment variables:
 
 ## CI/CD Pipeline
 
-This project uses GitHub Actions for continuous integration. The workflows:
+This project uses GitHub Actions for continuous integration with separate workflows for different testing scenarios:
 
-### Build Workflow
+### Build Workflow (`go.yml`)
 1. Builds the Go application
-2. Builds a Docker image
-3. Verifies the Docker container works correctly
+2. Runs in-memory tests (no database required)
+3. Builds a Docker image
 
-### Test Workflow
-1. Sets up a PostgreSQL service container
-2. Runs all unit tests
-3. Runs integration tests with database connectivity
+### Database Test Workflow (`test.yml`)
+1. Runs two parallel job streams:
+   - In-memory tests: Fast verification of core functionality
+   - Database tests: Full integration tests with PostgreSQL
+
+This approach ensures fast feedback on basic functionality while still thoroughly testing database integration.
+
+## Architecture
+
+The service follows a clean architecture pattern with clearly separated concerns:
+
+1. **Command Layer** (`cmd/server`): Entry point and server lifecycle management
+2. **Router Layer** (`internal/server`): HTTP routing and request handling
+3. **Auth Layer** (`internal/auth`): Authentication and provider interfaces
+4. **Storage Layer** (`internal/auth/providers`): User and token storage implementations
+5. **Database Layer** (`internal/database`): Database connection and schema management
+
+This separation allows for easy testing, maintenance, and future expansion.
 
 ## Next Steps
 
