@@ -1,0 +1,266 @@
+package database
+
+import (
+	"embed"
+	"errors"
+	"fmt"
+	"io/fs"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+
+	"github.com/jmoiron/sqlx"
+)
+
+// TODO: Enable embedding when build is fixed
+// //go:embed migrations/*.sql
+// var migrationsFS embed.FS
+
+// Using a placeholder for now
+var migrationsFS struct{}
+
+// MigrationFile represents a single migration file
+type MigrationFile struct {
+	Version  int
+	Name     string
+	UpSQL    string
+	DownSQL  string
+	FilePath string
+}
+
+// MigrationError is a custom error type for migration issues
+type MigrationError struct {
+	Version int
+	Err     error
+}
+
+func (e *MigrationError) Error() string {
+	return fmt.Sprintf("migration error (version %d): %v", e.Version, e.Err)
+}
+
+// runs all pending migrations
+func Migrate(db *sqlx.DB) error {
+	// Ensure the migrations table exists
+	if _, err := db.Exec(`
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version INTEGER PRIMARY KEY,
+			applied_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+		);
+	`); err != nil {
+		return fmt.Errorf("failed to create migrations table: %w", err)
+	}
+
+	// Get the current schema version
+	var currentVersion int
+	err := db.Get(&currentVersion, `
+		SELECT COALESCE(MAX(version), 0) FROM schema_migrations
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to get current schema version: %w", err)
+	}
+
+	// Load migrations
+	migrations, err := loadMigrations()
+	if err != nil {
+		return fmt.Errorf("failed to load migrations: %w", err)
+	}
+
+	// Filter and sort migrations
+	var pendingMigrations []*MigrationFile
+	for _, m := range migrations {
+		if m.Version > currentVersion {
+			pendingMigrations = append(pendingMigrations, m)
+		}
+	}
+	sort.Slice(pendingMigrations, func(i, j int) bool {
+		return pendingMigrations[i].Version < pendingMigrations[j].Version
+	})
+
+	// Apply pending migrations
+	for _, migration := range pendingMigrations {
+		tx, err := db.Beginx()
+		if err != nil {
+			return fmt.Errorf("failed to begin transaction: %w", err)
+		}
+
+		// Execute the migration
+		if _, err := tx.Exec(migration.UpSQL); err != nil {
+			tx.Rollback()
+			return &MigrationError{
+				Version: migration.Version,
+				Err:     fmt.Errorf("failed to execute migration: %w", err),
+			}
+		}
+
+		// Update the schema version
+		if _, err := tx.Exec("INSERT INTO schema_migrations (version) VALUES ($1)", migration.Version); err != nil {
+			tx.Rollback()
+			return &MigrationError{
+				Version: migration.Version,
+				Err:     fmt.Errorf("failed to update schema version: %w", err),
+			}
+		}
+
+		if err := tx.Commit(); err != nil {
+			return &MigrationError{
+				Version: migration.Version,
+				Err:     fmt.Errorf("failed to commit transaction: %w", err),
+			}
+		}
+
+		fmt.Printf("Applied migration %d: %s\n", migration.Version, migration.Name)
+	}
+
+	return nil
+}
+
+// rolls back the latest migration
+func RollbackLatest(db *sqlx.DB) error {
+	// Get the latest schema version
+	var latestVersion int
+	err := db.Get(&latestVersion, `
+		SELECT COALESCE(MAX(version), 0) FROM schema_migrations
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to get latest schema version: %w", err)
+	}
+
+	if latestVersion == 0 {
+		return errors.New("no migrations to roll back")
+	}
+
+	// Load migrations
+	migrations, err := loadMigrations()
+	if err != nil {
+		return fmt.Errorf("failed to load migrations: %w", err)
+	}
+
+	// Find the latest migration
+	var latestMigration *MigrationFile
+	for _, m := range migrations {
+		if m.Version == latestVersion {
+			latestMigration = m
+			break
+		}
+	}
+
+	if latestMigration == nil {
+		return fmt.Errorf("migration file for version %d not found", latestVersion)
+	}
+
+	// Execute the rollback
+	tx, err := db.Beginx()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	if _, err := tx.Exec(latestMigration.DownSQL); err != nil {
+		tx.Rollback()
+		return &MigrationError{
+			Version: latestMigration.Version,
+			Err:     fmt.Errorf("failed to execute rollback: %w", err),
+		}
+	}
+
+	if _, err := tx.Exec("DELETE FROM schema_migrations WHERE version = $1", latestVersion); err != nil {
+		tx.Rollback()
+		return &MigrationError{
+			Version: latestMigration.Version,
+			Err:     fmt.Errorf("failed to update schema version: %w", err),
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return &MigrationError{
+			Version: latestMigration.Version,
+			Err:     fmt.Errorf("failed to commit transaction: %w", err),
+		}
+	}
+
+	fmt.Printf("Rolled back migration %d: %s\n", latestMigration.Version, latestMigration.Name)
+	return nil
+}
+
+// loads all migration files from the embedded filesystem
+func loadMigrations() ([]*MigrationFile, error) {
+	var migrations []*MigrationFile
+	migrationMap := make(map[int]*MigrationFile)
+
+	// Read all migration files
+	err := fs.WalkDir(migrationsFS, "migrations", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		if d.IsDir() || !strings.HasSuffix(d.Name(), ".sql") {
+			return nil
+		}
+
+		// Parse filename to get version and name
+		filename := d.Name()
+		parts := strings.Split(filename, "_")
+		if len(parts) < 2 {
+			return fmt.Errorf("invalid migration filename: %s", filename)
+		}
+
+		versionStr := parts[0]
+		version, err := strconv.Atoi(versionStr)
+		if err != nil {
+			return fmt.Errorf("invalid migration version: %s", versionStr)
+		}
+
+		// Extract name without extension
+		nameWithExt := strings.Join(parts[1:], "_")
+		name := strings.TrimSuffix(nameWithExt, filepath.Ext(nameWithExt))
+
+		// Read file content
+		content, err := fs.ReadFile(migrationsFS, path)
+		if err != nil {
+			return fmt.Errorf("failed to read migration file: %w", err)
+		}
+
+		// Add to or update in map based on up/down
+		if strings.HasSuffix(filename, ".up.sql") {
+			m, exists := migrationMap[version]
+			if !exists {
+				m = &MigrationFile{
+					Version:  version,
+					Name:     name,
+					FilePath: path,
+				}
+				migrationMap[version] = m
+			}
+			m.UpSQL = string(content)
+		} else if strings.HasSuffix(filename, ".down.sql") {
+			m, exists := migrationMap[version]
+			if !exists {
+				m = &MigrationFile{
+					Version:  version,
+					Name:     name,
+					FilePath: path,
+				}
+				migrationMap[version] = m
+			}
+			m.DownSQL = string(content)
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert map to slice
+	for _, m := range migrationMap {
+		migrations = append(migrations, m)
+	}
+
+	// Sort by version
+	sort.Slice(migrations, func(i, j int) bool {
+		return migrations[i].Version < migrations[j].Version
+	})
+
+	return migrations, nil
+}

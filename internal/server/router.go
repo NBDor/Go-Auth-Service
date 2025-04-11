@@ -103,14 +103,88 @@ func SetupRouter() (http.Handler, *auth.ProviderRegistry) {
 			token, user.ID, user.Username, user.Email)
 	})
 
+	// Add a protected endpoint that requires authentication
+	mux.HandleFunc("GET /auth/me", func(w http.ResponseWriter, r *http.Request) {
+		// Extract token from Authorization header
+		auth := r.Header.Get("Authorization")
+		if auth == "" {
+			http.Error(w, "Missing Authorization header", http.StatusUnauthorized)
+			return
+		}
+		
+		// Remove "Bearer " prefix if present
+		token := auth
+		if len(auth) > 7 && strings.ToUpper(auth[0:7]) == "BEARER " {
+			token = auth[7:]
+		}
+		
+		// Get the provider
+		provider, exists := providerRegistry.Get("local")
+		if !exists {
+			http.Error(w, "Authentication provider not available", http.StatusInternalServerError)
+			return
+		}
+		
+		// Validate token
+		user, err := provider.ValidateToken(r.Context(), token)
+		if err != nil {
+			log.Printf("Token validation error: %v", err)
+			http.Error(w, "Invalid or revoked token", http.StatusUnauthorized)
+			return
+		}
+		
+		// Return user info
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `{"user":{"id":"%s","username":"%s","email":"%s","roles":["%s"]}}`,
+			user.ID, user.Username, user.Email, strings.Join(user.Roles, "\",\""))
+	})
+
+	// Add a token revocation endpoint
+	mux.HandleFunc("POST /auth/logout", func(w http.ResponseWriter, r *http.Request) {
+		// Extract token from Authorization header
+		auth := r.Header.Get("Authorization")
+		if auth == "" {
+			http.Error(w, "Missing Authorization header", http.StatusBadRequest)
+			return
+		}
+		
+		// Remove "Bearer " prefix if present
+		token := auth
+		if len(auth) > 7 && strings.ToUpper(auth[0:7]) == "BEARER " {
+			token = auth[7:]
+		}
+		
+		// Get the provider
+		provider, exists := providerRegistry.Get("local")
+		if !exists {
+			http.Error(w, "Authentication provider not available", http.StatusInternalServerError)
+			return
+		}
+		
+		// Revoke the token
+		err := provider.RevokeToken(r.Context(), token)
+		if err != nil {
+			log.Printf("Token revocation error: %v", err)
+			http.Error(w, "Error revoking token", http.StatusInternalServerError)
+			return
+		}
+		
+		// Return success response
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `{"message":"Successfully logged out"}`)
+	})
+
 	return mux, providerRegistry
 }
 
 // useInMemoryStorage sets up the in-memory user store for authentication
 func useInMemoryStorage(registry *auth.ProviderRegistry) {
 	userStore := local.NewMemoryUserStore()
+	tokenStore := local.NewMemoryTokenStore()
 	localProviderConfig := getJWTConfig()
-	localProvider := local.NewProvider(localProviderConfig, userStore)
+	localProvider := local.NewProviderWithRevocation(localProviderConfig, userStore, tokenStore)
 	registry.Register(localProvider)
 
 	// Add a sample user for testing
@@ -131,11 +205,12 @@ func useInMemoryStorage(registry *auth.ProviderRegistry) {
 // usePostgresStorage sets up the PostgreSQL user store for authentication
 func usePostgresStorage(registry *auth.ProviderRegistry, db *sqlx.DB) {
 	userStore := postgres.NewSQLUserStore(db)
+	tokenStore := postgres.NewTokenStore(db)
 	localProviderConfig := getJWTConfig()
 	log.Printf("Using JWT config: secret=%s, expiry=%s", 
 		localProviderConfig.JWTSecret[:3]+"...", localProviderConfig.TokenExpiration)
 	
-	localProvider := local.NewProvider(localProviderConfig, userStore)
+	localProvider := local.NewProviderWithRevocation(localProviderConfig, userStore, tokenStore)
 	registry.Register(localProvider)
 
 	// Check if we need to create an admin user

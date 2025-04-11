@@ -1,6 +1,8 @@
 package jwt
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"time"
 
@@ -29,8 +31,12 @@ func NewUtil(secret string, expiresIn time.Duration) *Util {
 func (u *Util) GenerateToken(claims map[string]interface{}) (string, error) {
 	now := time.Now()
 	
+	// Create a random token ID
+	tokenID := generateTokenID()
+	
 	// Create the token with standard claims
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"jti": tokenID,                         // JWT ID
 		"iat": now.Unix(),                      // Issued at
 		"exp": now.Add(u.expiresIn).Unix(),     // Expiration time
 		"nbf": now.Unix(),                      // Not valid before
@@ -72,6 +78,17 @@ func (u *Util) ValidateToken(tokenString string) (map[string]interface{}, error)
 	}
 	
 	return nil, ErrInvalidToken
+}
+
+// generateTokenID creates a random token ID
+func generateTokenID() string {
+	buf := make([]byte, 16)
+	_, err := rand.Read(buf)
+	if err != nil {
+		// Fallback to timestamp if random fails
+		return hex.EncodeToString([]byte(time.Now().String()))
+	}
+	return hex.EncodeToString(buf)
 }
 
 // validates an existing token and issues a new one

@@ -66,6 +66,18 @@ func NewConfigFromEnv() Config {
 		config.SSLMode = sslMode
 	}
 	
+	if maxConns := getEnvAsInt("DB_MAX_CONNS", 0); maxConns != 0 {
+		config.MaxConns = maxConns
+	}
+	
+	if maxIdle := getEnvAsInt("DB_MAX_IDLE", 0); maxIdle != 0 {
+		config.MaxIdle = maxIdle
+	}
+	
+	if timeout := getEnvAsInt("DB_TIMEOUT", 0); timeout != 0 {
+		config.Timeout = time.Duration(timeout) * time.Second
+	}
+	
 	return config
 }
 
@@ -77,7 +89,7 @@ func (c Config) DSN() string {
 	)
 }
 
-// establishes a connection to the database
+// establishes a connection to the database and runs migrations
 func Connect(config Config) (*sqlx.DB, error) {
 	db, err := sqlx.Connect("postgres", config.DSN())
 	if err != nil {
@@ -92,40 +104,9 @@ func Connect(config Config) (*sqlx.DB, error) {
 	return db, nil
 }
 
-// creates necessary tables if they don't exist
+// Initializes the database by running migrations
 func Initialize(db *sqlx.DB) error {
-	schema := `
-	CREATE TABLE IF NOT EXISTS users (
-		id VARCHAR(36) PRIMARY KEY,
-		username VARCHAR(255) NOT NULL UNIQUE,
-		email VARCHAR(255) NOT NULL UNIQUE,
-		password_hash VARCHAR(255) NOT NULL,
-		created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
-		updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
-	);
-
-	CREATE TABLE IF NOT EXISTS user_roles (
-		user_id VARCHAR(36) REFERENCES users(id) ON DELETE CASCADE,
-		role VARCHAR(50) NOT NULL,
-		PRIMARY KEY (user_id, role)
-	);
-
-	CREATE TABLE IF NOT EXISTS user_metadata (
-		user_id VARCHAR(36) REFERENCES users(id) ON DELETE CASCADE,
-		key VARCHAR(255) NOT NULL,
-		value JSONB NOT NULL,
-		PRIMARY KEY (user_id, key)
-	);
-
-	CREATE TABLE IF NOT EXISTS revoked_tokens (
-		token_id VARCHAR(255) PRIMARY KEY,
-		revoked_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now(),
-		expires_at TIMESTAMP WITH TIME ZONE NOT NULL
-	);
-	`
-
-	_, err := db.Exec(schema)
-	return err
+	return Migrate(db)
 }
 
 // Helper functions for environment variables
